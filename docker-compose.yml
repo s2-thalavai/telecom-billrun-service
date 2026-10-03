@@ -1,0 +1,50 @@
+# MySQL 8.4 + bill run service (prod profile, Flyway seeds 2,000 accounts). Console: http://localhost:8080
+name: telecom-billrun
+
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: billrun-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_pass_change_me}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-billing}
+      MYSQL_USER: ${MYSQL_USER:-billing_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-billing_pass_change_me}
+      TZ: UTC
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  app:
+    build: .
+    image: telecom-billrun-service:1.0.0
+    container_name: billrun-app
+    restart: unless-stopped
+    # longer than spring.lifecycle.timeout-per-shutdown-phase / executor await-termination (60s)
+    stop_grace_period: 75s
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: ${MYSQL_DATABASE:-billing}
+      DB_USERNAME: ${MYSQL_USER:-billing_user}
+      DB_PASSWORD: ${MYSQL_PASSWORD:-billing_pass_change_me}
+      TELECOM_BILLING_RATING_LATENCY: ${TELECOM_BILLING_RATING_LATENCY:-20ms}
+      TELECOM_JOBS_WORKERS: ${TELECOM_JOBS_WORKERS:-2}
+      TELECOM_JOBS_CHUNK_SIZE: ${TELECOM_JOBS_CHUNK_SIZE:-100}
+    ports:
+      - "${APP_PORT:-8080}:8080"
+
+volumes:
+  mysql-data:

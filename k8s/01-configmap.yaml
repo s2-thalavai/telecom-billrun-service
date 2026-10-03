@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: billrun-config
+  namespace: telecom-billrun
+data:
+  SPRING_PROFILES_ACTIVE: "prod"
+  DB_HOST: "mysql"
+  DB_PORT: "3306"
+  DB_NAME: "billing"
+  TELECOM_JOBS_WORKERS: "2"
+  TELECOM_JOBS_CHUNK_SIZE: "100"
+  # must comfortably exceed the time of one chunk; stale jobs are resumed by another pod
+  TELECOM_JOBS_HEARTBEAT_TIMEOUT: "2m"
+  TELECOM_BILLING_RATING_LATENCY: "20ms"
+  JAVA_OPTS: "-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError -Duser.timezone=UTC"

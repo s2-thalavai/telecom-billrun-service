@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bill Run Operations</title>
+  <style>
+    /* Ledger-paper palette: warm off-white, ink navy, progress in billing-green; system fonts. */
+    :root { --bg:#f6f4ef; --card:#fffdf9; --ink:#1e2a3a; --muted:#5f6b7a; --line:#ddd7cc; --accent:#22663f;
+            --accent-ink:#fff; --warn:#9a5a00; --err:#a3261b; --font:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+            --mono:ui-monospace,Menlo,Consolas,monospace; }
+    @media (prefers-color-scheme: dark) { :root { --bg:#14171c; --card:#1c2027; --ink:#e8e6e1; --muted:#a8afba;
+            --line:#30353f; --accent:#5ccf8b; --accent-ink:#0d1a12; --warn:#f1b35a; --err:#ff8a7f; } }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 var(--font); }
+    header, main { max-width:68rem; margin:0 auto; padding:0 1.5rem; }
+    header { padding-top:2rem; } h1 { margin:0; font-size:1.8rem; }
+    header p { margin:.25rem 0 1rem; color:var(--muted); max-width:62ch; }
+    section { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:1.1rem 1.25rem; margin-bottom:1.25rem; }
+    h2 { margin:0 0 .75rem; font-size:1.05rem; }
+    .row { display:flex; gap:.6rem; align-items:end; flex-wrap:wrap; }
+    label { display:block; font-weight:600; font-size:.85rem; margin-bottom:.25rem; }
+    input { padding:.45rem .55rem; font:inherit; color:inherit; background:var(--bg); border:1px solid var(--line); border-radius:4px; }
+    button { padding:.45rem .8rem; font:inherit; font-weight:600; border-radius:4px; cursor:pointer; border:1px solid var(--line); background:var(--bg); color:var(--ink); }
+    button.primary { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); }
+    button.danger { color:var(--err); }
+    :focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
+    .status { min-height:1.4rem; margin:.5rem 0 0; } .status.err { color:var(--err); } .status.ok { color:var(--accent); }
+    table { width:100%; border-collapse:collapse; }
+    th, td { text-align:left; padding:.55rem .4rem; border-bottom:1px solid var(--line); vertical-align:middle; }
+    th { font-size:.82rem; color:var(--muted); font-weight:600; }
+    .num { font-variant-numeric:tabular-nums; white-space:nowrap; }
+    /* The one bold element: the progress bar, drawn as a ruled ledger strip */
+    .bar { position:relative; height:1.1rem; min-width:9rem; border:1px solid var(--line); border-radius:3px;
+           background:repeating-linear-gradient(90deg, transparent 0 9.5%, var(--line) 9.5% 10%); overflow:hidden; }
+    .bar > span { position:absolute; inset:0 auto 0 0; background:var(--accent); opacity:.85; transition:width .4s ease-out; }
+    .bar.CANCELLED > span, .bar.FAILED > span { background:var(--warn); }
+    .badge { font-size:.78rem; font-weight:700; letter-spacing:.02em; }
+    .badge.COMPLETED { color:var(--accent); } .badge.FAILED, .badge.CANCELLED { color:var(--warn); } .badge.RUNNING, .badge.QUEUED { color:var(--muted); }
+    .muted { color:var(--muted); font-size:.85rem; }
+    #live { font:.82rem/1.5 var(--mono); max-height:9rem; overflow:auto; background:var(--bg); padding:.5rem; border-radius:4px; margin:.5rem 0 0; }
+    @media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Bill run operations</h1>
+  <p>Start a bill run for a billing cycle and watch it work in the background. Cancel it at the next chunk, or force-stop it immediately.</p>
+</header>
+<main>
+  <section aria-labelledby="start-title">
+    <h2 id="start-title">Start a bill run</h2>
+    <div class="row">
+      <div><label for="cycle">Billing cycle</label><input id="cycle" placeholder="2026-09" maxlength="7" inputmode="numeric"></div>
+      <button class="primary" id="start" type="button">Start</button>
+      <button id="summary" type="button">Show invoices for cycle</button>
+    </div>
+    <p id="start-status" class="status" role="status" aria-live="polite"></p>
+  </section>
+
+  <section aria-labelledby="jobs-title">
+    <h2 id="jobs-title">Jobs</h2>
+    <table>
+      <thead><tr><th>Cycle</th><th>Status</th><th>Progress</th><th class="num">Done / total</th><th class="num">Failed</th><th class="num">Rate · ETA</th><th><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody id="jobs"><tr><td colspan="7" class="muted">No jobs yet.</td></tr></tbody>
+    </table>
+  </section>
+
+  <section aria-labelledby="live-title">
+    <h2 id="live-title">Live progress</h2>
+    <p class="muted">Pick "Watch" on a job to follow its server-sent progress events.</p>
+    <div id="live" aria-live="polite"></div>
+  </section>
+</main>
+<script>
+const $ = (s) => document.querySelector(s);
+const API = '/api/v1';
+let source = null;
+$('#cycle').value = new Date(Date.now() - 20 * 86400000).toISOString().slice(0, 7);   // last month
+
+$('#start').addEventListener('click', async () => {
+  const res = await fetch(`${API}/bill-runs`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-User': 'ops-console' },
+                                                 body: JSON.stringify({ cycle: $('#cycle').value.trim() }) });
+  const body = await res.json();
+  status(res.ok ? `Started job ${body.id.slice(0, 8)}…` : (body.errors?.cycle || body.detail || `Error ${res.status}`), res.ok ? 'ok' : 'err');
+  if (res.ok) { refresh(); watch(body.id); }
+});
+
+$('#summary').addEventListener('click', async () => {
+  const res = await fetch(`${API}/bill-runs/${encodeURIComponent($('#cycle').value.trim())}/summary`);
+  const s = await res.json();
+  status(res.ok ? `${s.invoices.toLocaleString()} invoices for ${s.cycle}, total INR ${Number(s.totalAmount).toLocaleString()}` : (s.detail || 'Invalid cycle'), res.ok ? 'ok' : 'err');
+});
+
+$('#jobs').addEventListener('click', async (e) => {
+  const id = e.target.dataset.id; if (!id) return;
+  if (e.target.dataset.action === 'watch') { watch(id); return; }
+  const force = e.target.dataset.action === 'force';
+  if (force && !confirm('Force-stop interrupts the worker immediately. The current chunk is rolled back. Continue?')) return;
+  const res = await fetch(`${API}/jobs/${id}/cancel?force=${force}`, { method: 'POST' });
+  const body = await res.json();
+  status(res.ok ? (force ? 'Force-stop requested.' : 'Cancellation requested; the job stops after the current chunk.') : body.detail, res.ok ? 'ok' : 'err');
+  refresh();
+});
+
+async function refresh() {
+  const res = await fetch(`${API}/jobs?size=10`);
+  if (!res.ok) return;
+  const page = await res.json();
+  $('#jobs').innerHTML = page.content.length ? page.content.map(row).join('') : '<tr><td colspan="7" class="muted">No jobs yet.</td></tr>';
+}
+
+function row(j) {
+  const active = j.status === 'RUNNING' || j.status === 'QUEUED';
+  const done = j.processedItems + j.failedItems;
+  const rate = j.itemsPerSecond ? `${j.itemsPerSecond}/s` : '–';
+  const eta = j.etaSeconds != null ? ` · ${fmtDuration(j.etaSeconds)}` : '';
+  return `<tr>
+    <td>${esc(j.parameters)}</td>
+    <td><span class="badge ${j.status}">${j.status}</span>${j.cancelRequested && active ? ' <span class="muted">(cancelling)</span>' : ''}
+        ${j.message && !active ? `<div class="muted">${esc(j.message)}</div>` : ''}</td>
+    <td><div class="bar ${j.status}" role="progressbar" aria-valuenow="${j.percent}" aria-valuemin="0" aria-valuemax="100"><span style="width:${j.percent}%"></span></div>
+        <span class="muted">${j.percent}%</span></td>
+    <td class="num">${done.toLocaleString()} / ${j.totalItems.toLocaleString()}</td>
+    <td class="num">${j.failedItems.toLocaleString()}</td>
+    <td class="num">${rate}${eta}</td>
+    <td>${active ? `<button data-id="${j.id}" data-action="cancel" type="button">Cancel</button>
+                   <button class="danger" data-id="${j.id}" data-action="force" type="button">Force stop</button>` : ''}
+        <button data-id="${j.id}" data-action="watch" type="button">Watch</button></td></tr>`;
+}
+
+function watch(id) {
+  if (source) source.close();
+  const out = $('#live'); out.textContent = '';
+  source = new EventSource(`${API}/jobs/${id}/progress`);
+  source.addEventListener('progress', (e) => {
+    const j = JSON.parse(e.data);
+    out.textContent = `${new Date().toLocaleTimeString()}  ${j.status.padEnd(9)} ${String(j.percent).padStart(5)}%  ` +
+      `${j.processedItems + j.failedItems}/${j.totalItems}  failed=${j.failedItems}  checkpoint=${j.checkpoint ?? '-'}\n` + out.textContent;
+    if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(j.status)) { source.close(); source = null; refresh(); }
+  });
+  source.onerror = () => { if (source) { source.close(); source = null; } };
+}
+
+function status(msg, kind) { const el = $('#start-status'); el.textContent = msg; el.className = `status ${kind}`; }
+function fmtDuration(s) { return s >= 3600 ? `${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m` : s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`; }
+function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c])); }
+
+refresh();
+setInterval(refresh, 1000);
+</script>
+<style>.sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }</style>
+</body>
+</html>

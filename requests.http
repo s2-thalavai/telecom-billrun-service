@@ -1,0 +1,37 @@
+### Telecom bill run API – IntelliJ HTTP Client / VS Code REST Client
+@api = http://localhost:8080/api/v1
+
+### Start a bill run (202 + Location)
+POST {{api}}/bill-runs
+Content-Type: application/json
+X-User: alice
+
+{"cycle":"2026-09"}
+
+### Same cycle while active -> 409
+POST {{api}}/bill-runs
+Content-Type: application/json
+
+{"cycle":"2026-09"}
+
+### List jobs (newest first)
+GET {{api}}/jobs?size=10
+
+### Running jobs only
+GET {{api}}/jobs?status=RUNNING
+
+### One job: status, percent, rate, ETA, checkpoint
+GET {{api}}/jobs/REPLACE_WITH_ID
+
+### SSE progress stream
+GET {{api}}/jobs/REPLACE_WITH_ID/progress
+Accept: text/event-stream
+
+### Cooperative cancel (stops after the current chunk)
+POST {{api}}/jobs/REPLACE_WITH_ID/cancel
+
+### Forced cancel (interrupts the worker; current chunk rolls back)
+POST {{api}}/jobs/REPLACE_WITH_ID/cancel?force=true
+
+### Invoices produced for a cycle
+GET {{api}}/bill-runs/2026-09/summary

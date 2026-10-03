@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: telecom-billrun
+resources:
+  - 00-namespace.yaml
+  - 01-configmap.yaml
+  - 02-secret.yaml
+  - 10-mysql.yaml
+  - 20-app-deployment.yaml
+  - 21-app-service.yaml
+  - 22-ingress.yaml
+images:
+  - name: telecom-billrun-service
+    newTag: "1.0.0"

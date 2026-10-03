@@ -1,0 +1,23 @@
+# SSE progress streams are long-lived: long read timeout, no proxy buffering.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: billrun-ingress
+  namespace: telecom-billrun
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: billrun.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: billrun-service
+                port:
+                  name: http
